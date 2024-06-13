@@ -1,0 +1,13 @@
+datamodule:
+  name: FrequencyClassifierDataModule
+  config:
+    dataset_dir: </path/to/training/dataset>
+    batch_size: 256
+    num_workers: 10
+    frequencies:
+      35: 0
+      40: 1
+      45: 2
+      50: 3
+      55: 4
+      60: 5

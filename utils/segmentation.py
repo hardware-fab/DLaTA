@@ -35,53 +35,67 @@ OVERRIDE_MSG = "overriding files..."
 FREQUENCIES = {35: 0, 40: 1, 45: 2, 50: 3, 55: 4, 60: 5}
 
 
-def _segmentationGradCAM(traces, module, batch_size, num_frequencies, device):
-    segmented_traces = []
-
+def _batchify(traces, batch_size):
     n_iters = ceil(traces.shape[0] / batch_size)
 
-    torch.cuda.empty_cache()
-
-    for i in tqdm(range(n_iters), desc='Grad-CAM Segmentation', leave=False, position=1):
+    for i in range(n_iters):
         low_plain_idx = i*batch_size
         high_plain_idx = min((i+1)*batch_size, traces.shape[0])
         real_batch_size = high_plain_idx - low_plain_idx
 
-        curr_traces = traces[low_plain_idx: high_plain_idx]
-        curr_traces = curr_traces.reshape(real_batch_size, traces.shape[-1])
-        curr_traces = torch.from_numpy(curr_traces)
-        curr_traces = curr_traces.to(device)
+        traces_batch = traces[low_plain_idx: high_plain_idx]
+        traces_batch = traces_batch.reshape(real_batch_size, traces.shape[-1])
+        yield traces_batch
 
-        y_hat = module(curr_traces)
 
-        maps = module.model.encoder.forward_hooks['grad_cam'].detach()
-        num_maps = maps.shape[1]
+def _classify(traces, module, device):
+    traces = torch.from_numpy(traces)
+    traces = traces.to(device)
+    return module(traces)
 
-        batch_weights = torch.zeros(
-            (real_batch_size, num_frequencies, num_maps)).cuda()  # 8  x 6 x 32
 
-        for k in range(num_frequencies):
-            pred = y_hat[:, k].sum()
-            pred.backward(retain_graph=True)
-            # 8 x 32
-            grad = module.model.encoder.backward_hooks['grad_cam'].detach()
-            batch_weights[:, k, :] = grad  # 8 x 6 x 32
-        batch_maps = maps.permute(0, 2, 1)  # maps: 8 x 134016 x 32
-        class_maps = torch.bmm(
-            batch_maps, batch_weights.permute(0, 2, 1))  # 8 x 134016 x 6
-        class_maps = torch.nn.functional.relu(class_maps)
+def _segmentationGradCAM(traces, module, batch_size, num_frequencies, device):
+    segmented_traces = []
 
-        del maps
-        del batch_weights
-        segmented_traces.append(class_maps.detach().cpu())
+    torch.cuda.empty_cache()
+
+    for traces_batch in tqdm(_batchify(traces, batch_size),
+                             total=ceil(traces.shape[0] / batch_size),
+                             leave=False, position=1,
+                             desc='Grad-CAM Segmentation'):
+
+        y_hat = _classify(traces_batch, module, device)
+        class_maps = _gradCam(module, num_frequencies,
+                              traces_batch.shape[0], y_hat)
+        segmented_traces.append(class_maps.cpu())
         del class_maps
 
     segmented_traces = torch.cat(segmented_traces, dim=0)
     segmented_traces = segmented_traces.permute(0, 2, 1)
 
-    data_return = segmented_traces.data.numpy()
+    return segmented_traces.data.numpy()
 
-    return data_return
+
+def _gradCam(module, num_frequencies, batch_size, y_hat):
+    maps = module.model.encoder.forward_hooks['grad_cam'].detach()
+    num_maps = maps.shape[1]
+
+    batch_weights = torch.zeros(
+        (batch_size, num_frequencies, num_maps)).cuda()  # BS  x 6 x 32
+
+    for k in range(num_frequencies):
+        pred = y_hat[:, k].sum()
+        pred.backward(retain_graph=True)
+        # 8 x 32
+        grad = module.model.encoder.backward_hooks['grad_cam'].detach()
+        batch_weights[:, k, :] = grad  # BS x 6 x 32
+    batch_maps = maps.permute(0, 2, 1)  # maps: BS x 134016 x 32
+    class_maps = torch.bmm(
+        batch_maps, batch_weights.permute(0, 2, 1))  # BS x 134016 x 6
+    class_maps = torch.nn.functional.relu(class_maps)
+    del maps
+    del batch_weights
+    return class_maps.detach()
 
 
 def _segmentationGT(traces, gts):
@@ -195,41 +209,53 @@ def _align_trace(trace, df_windows, plain_index, target_freq, interp_kind):
         curr_freq = frequencies[i]
 
         if int(curr_freq) == int(target_freq):
-            end_idx = start_idx + curr_size
-            if start_idx + curr_size > TRACE_SIZE:
-                end_idx = TRACE_SIZE
-                curr_size = TRACE_SIZE - start_idx
-                curr_end = curr_start + curr_size
-                to_break = True
-            aligned_trace[start_idx:end_idx] = trace[curr_start:curr_end]
-            start_idx += curr_size
+            curr_end, curr_size, to_break = _no_rescale(
+                trace, TRACE_SIZE, aligned_trace, start_idx, curr_start, curr_end, curr_size,
+                to_break)
         elif curr_end - curr_start < 2:
-            end_idx = start_idx + curr_size
-            if start_idx + curr_size > TRACE_SIZE:
-                end_idx = TRACE_SIZE
-                curr_size = TRACE_SIZE - start_idx
-                curr_end = curr_start + curr_size
-                to_break = True
-            aligned_trace[start_idx:end_idx] = trace[curr_start:curr_end]
-            start_idx += curr_size
+            curr_end, curr_size, to_break = _no_rescale(
+                trace, TRACE_SIZE, aligned_trace, start_idx, curr_start, curr_end, curr_size,
+                to_break)
         else:
-            freq_ratio = float(target_freq) / float(curr_freq)
-            rescaler = FrequencyRescaler(freq_ratio, interp_kind)
-            aligned_win = rescaler.scale_windows(trace[curr_start:curr_end])
-            size_aligned = aligned_win.shape[-1]
-            if start_idx + size_aligned > TRACE_SIZE:
-                size_aligned = TRACE_SIZE - start_idx
-                aligned_win = aligned_win[:size_aligned]
-                to_break = True
-            end_idx = start_idx + size_aligned
-            aligned_trace[start_idx:end_idx] = aligned_win
-            start_idx += size_aligned
+            to_break = _rescale(trace, target_freq, interp_kind, TRACE_SIZE,
+                                aligned_trace, start_idx, curr_start, curr_end, curr_freq,
+                                to_break)
 
         if to_break:
             break
 
     trace = aligned_trace[:trace.shape[-1]]
     return trace.astype(np.float32)
+
+
+def _rescale(trace, target_freq, interp_kind, TRACE_SIZE,
+             aligned_trace, start_idx, curr_start, curr_end, curr_freq,
+             to_break):
+    freq_ratio = float(target_freq) / float(curr_freq)
+    rescaler = FrequencyRescaler(freq_ratio, interp_kind)
+    aligned_win = rescaler.scale_windows(trace[curr_start:curr_end])
+    size_aligned = aligned_win.shape[-1]
+    if start_idx + size_aligned > TRACE_SIZE:
+        size_aligned = TRACE_SIZE - start_idx
+        aligned_win = aligned_win[:size_aligned]
+        to_break = True
+    end_idx = start_idx + size_aligned
+    aligned_trace[start_idx:end_idx] = aligned_win
+    start_idx += size_aligned
+    return to_break
+
+
+def _no_rescale(trace, TRACE_SIZE, aligned_trace, start_idx, curr_start,
+                curr_end, curr_size, to_break):
+    end_idx = start_idx + curr_size
+    if start_idx + curr_size > TRACE_SIZE:
+        end_idx = TRACE_SIZE
+        curr_size = TRACE_SIZE - start_idx
+        curr_end = curr_start + curr_size
+        to_break = True
+    aligned_trace[start_idx:end_idx] = trace[curr_start:curr_end]
+    start_idx += curr_size
+    return curr_end, curr_size, to_break
 
 
 def _localize_and_align(segmented_traces, traces, frequencies,
@@ -326,7 +352,7 @@ def segmentAlignGradCAM(traces: np.ndarray,
                         num_workers: int = 10,
                         force: bool = False):
     """
-    Segment the traces in the given dataset.
+    Segment and align the traces in the given dataset using Grad-CAM.
 
     Parameters
     ----------
@@ -370,7 +396,7 @@ def segmentAlignGradCAM(traces: np.ndarray,
     # -----------------
     process_pool = mp.Pool(processes=num_workers)
     with NpyAppendArray(segm_file, delete_if_exists=True) as npa_segment:
-        with tqdm(desc='Aligning',total=len(traces)//batch_size, position=0) as pbar:
+        with tqdm(desc='Aligning', total=len(traces)//batch_size, position=0) as pbar:
             for traces_batch in _dataLoader(traces, batch_size):
                 segm = _segmentationGradCAM(traces_batch, module, batch_size//25,
                                             len(FREQUENCIES), device)
@@ -379,9 +405,9 @@ def segmentAlignGradCAM(traces: np.ndarray,
                 pbar.update(0.7)
 
                 align(traces_batch, segm, output_dir, process_pool,
-                    log=log, num_workers=num_workers)
+                      log=log, num_workers=num_workers)
                 pbar.update(0.3)
-                
+
     process_pool.close()
 
 

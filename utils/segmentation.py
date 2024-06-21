@@ -183,7 +183,6 @@ def _align_trace_batch(batch_size, num_plain_texts, df_windows, traces, batch_id
 
     return batch_idx, aligned_traces
 
-
 def _align_trace(trace, df_windows, plain_index, target_freq, interp_kind):
     df_plain = df_windows[df_windows['plain_index'] == plain_index].copy()
     df_plain.sort_values(by='time_start', inplace=True)
@@ -209,54 +208,41 @@ def _align_trace(trace, df_windows, plain_index, target_freq, interp_kind):
         curr_freq = frequencies[i]
 
         if int(curr_freq) == int(target_freq):
-            curr_end, curr_size, to_break = _no_rescale(
-                trace, TRACE_SIZE, aligned_trace, start_idx, curr_start, curr_end, curr_size,
-                to_break)
+            end_idx = start_idx + curr_size
+            if start_idx + curr_size > TRACE_SIZE:
+                end_idx = TRACE_SIZE
+                curr_size = TRACE_SIZE - start_idx
+                curr_end = curr_start + curr_size
+                to_break = True
+            aligned_trace[start_idx:end_idx] = trace[curr_start:curr_end]
+            start_idx += curr_size
         elif curr_end - curr_start < 2:
-            curr_end, curr_size, to_break = _no_rescale(
-                trace, TRACE_SIZE, aligned_trace, start_idx, curr_start, curr_end, curr_size,
-                to_break)
+            end_idx = start_idx + curr_size
+            if start_idx + curr_size > TRACE_SIZE:
+                end_idx = TRACE_SIZE
+                curr_size = TRACE_SIZE - start_idx
+                curr_end = curr_start + curr_size
+                to_break = True
+            aligned_trace[start_idx:end_idx] = trace[curr_start:curr_end]
+            start_idx += curr_size
         else:
-            to_break = _rescale(trace, target_freq, interp_kind, TRACE_SIZE,
-                                aligned_trace, start_idx, curr_start, curr_end, curr_freq,
-                                to_break)
+            freq_ratio = float(target_freq) / float(curr_freq)
+            rescaler = FrequencyRescaler(freq_ratio, interp_kind)
+            aligned_win = rescaler.scale_windows(trace[curr_start:curr_end])
+            size_aligned = aligned_win.shape[-1]
+            if start_idx + size_aligned > TRACE_SIZE:
+                size_aligned = TRACE_SIZE - start_idx
+                aligned_win = aligned_win[:size_aligned]
+                to_break = True
+            end_idx = start_idx + size_aligned
+            aligned_trace[start_idx:end_idx] = aligned_win
+            start_idx += size_aligned
 
         if to_break:
             break
 
     trace = aligned_trace[:trace.shape[-1]]
     return trace.astype(np.float32)
-
-
-def _rescale(trace, target_freq, interp_kind, TRACE_SIZE,
-             aligned_trace, start_idx, curr_start, curr_end, curr_freq,
-             to_break):
-    freq_ratio = float(target_freq) / float(curr_freq)
-    rescaler = FrequencyRescaler(freq_ratio, interp_kind)
-    aligned_win = rescaler.scale_windows(trace[curr_start:curr_end])
-    size_aligned = aligned_win.shape[-1]
-    if start_idx + size_aligned > TRACE_SIZE:
-        size_aligned = TRACE_SIZE - start_idx
-        aligned_win = aligned_win[:size_aligned]
-        to_break = True
-    end_idx = start_idx + size_aligned
-    aligned_trace[start_idx:end_idx] = aligned_win
-    start_idx += size_aligned
-    return to_break
-
-
-def _no_rescale(trace, TRACE_SIZE, aligned_trace, start_idx, curr_start,
-                curr_end, curr_size, to_break):
-    end_idx = start_idx + curr_size
-    if start_idx + curr_size > TRACE_SIZE:
-        end_idx = TRACE_SIZE
-        curr_size = TRACE_SIZE - start_idx
-        curr_end = curr_start + curr_size
-        to_break = True
-    aligned_trace[start_idx:end_idx] = trace[curr_start:curr_end]
-    start_idx += curr_size
-    return curr_end, curr_size, to_break
-
 
 def _localize_and_align(segmented_traces, traces, frequencies,
                         df_windows, target_freq, interp_kind,

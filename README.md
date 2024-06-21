@@ -46,7 +46,7 @@ The repository is organized as follows:
 
 ## Dataset
 
-The `DFS_DESYNCH` dataset is avaible [here](https://dx.doi.org/10.21227/8txt-xe26).
+The `DFS_DESYNCH` dataset is avaible [here](https://huggingface.co/datasets/hardware-fab/DFS_DESYNCH) on 🤗 Hugging Face.
 
 The dataset is stored in the HDF5 file format (`dfs_desynch.h5`) and has the following structure:
 
@@ -59,6 +59,25 @@ The dataset is stored in the HDF5 file format (`dfs_desynch.h5`) and has the fol
   - **metadata:** This dataset contains metadata for each trace, including two members:
     - `key`: The secret key used for AES encryption.
     - `plaintext`: The plaintext used for the AES encryption.
+  
+### How to Download
+
+1. Download DFS_DESYNCH dataset from 🤗 [Hugging Face](https://huggingface.co/datasets/hardware-fab/DFS_DESYNCH).
+
+    ```python
+    from datasets import load_dataset
+
+    dataset = load_dataset("hardware-fab/dfs-desynch")
+    ```
+
+2. Assemble dataset chunks in one (virtual) dataset file.
+
+    ```bash
+    python assemble.py --dataset_dir <download_path>
+    ```
+
+    Replace `<download_path>` with the actual download path.
+    The `assemble.py` script is available along with the dataset.
 
 ## Note
 

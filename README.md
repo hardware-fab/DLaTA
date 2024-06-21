@@ -9,7 +9,7 @@ The repository is organized as follows:
 - `/CNN`: Contains modules and configuration files for the Convolutional Neural Network use for classify the operating frequency.
 - `/templateAttack`: Contains functions and classes for profiling a Template Attack and attacking side-channel traces.
 - `/utils`: Contains functions for segmenting and interpolating side-channel traces.
-- `DLaTA`: Jupyter Notebook for run a demo.
+- `DLaTA`: Jupyter Notebook for running a demo.
 
 ```txt
 .
@@ -67,7 +67,7 @@ The dataset is stored in the HDF5 file format (`dfs_desynch.h5`) and has the fol
     ```python
     from datasets import load_dataset
 
-    dataset = load_dataset("hardware-fab/dfs-desynch")
+    dataset = load_dataset("hardware-fab/DFS_DESYNCH")
     ```
 
 2. Assemble dataset chunks in one (virtual) dataset file.

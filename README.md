@@ -81,10 +81,10 @@ The dataset is stored in the HDF5 file format (`dfs_desynch.h5`) and has the fol
 
 ## Note
 
-This work is part of [1].
+This work is part of [1] available [online](https://doi.org/10.1109/TC.2024.3477997).
 
 This repository is protected by copyright and licensed under the [Apache-2.0 license](https://github.com/hardware-fab/DLaTA/blob/main/LICENSE) file.
 
 © 2024 hardware-fab
 
-> [1] Galli, D., Lattari, F., Matteucci, M., & Zoni, D.. A Deep Learning-assisted Template Attack Against Dynamic Frequency Scaling Countermeasures.
+> [1] D. Galli, F. Lattari, M. Matteucci and D. Zoni, "A Deep Learning-assisted Template Attack Against Dynamic Frequency Scaling Countermeasures," in IEEE Transactions on Computers, doi: 10.1109/TC.2024.3477997.
